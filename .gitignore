@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+
+# ignore semua isi models
+models/*
+
+# tapi jangan ignore foldernya
+!models/.gitkeep

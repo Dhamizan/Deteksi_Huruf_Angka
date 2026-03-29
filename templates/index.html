@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <title>DisaBicara – Level 2 (Kata)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <style>
+        body {
+            background: radial-gradient(circle at top, #0f2027, #000000);
+            color: #ffffff;
+            text-align: center;
+            font-family: 'Segoe UI', sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #00ff88;
+            letter-spacing: 1px;
+        }
+
+        .container {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+
+        .box {
+            width: 500px;
+            max-width: 100%;
+        }
+
+        .media-container {
+            position: relative;
+            width: 100%;
+            border-radius: 16px;
+            border: 2px solid #00ff88;
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
+            overflow: hidden;
+            background: #111;
+            aspect-ratio: 4/3;
+        }
+
+        video,
+        #paintCanvas,
+        #cameraOverlay {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* Mirror tampilan agar natural bagi user (seperti cermin) */
+        video {
+            transform: rotateY(180deg);
+        }
+
+        #cameraOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            transform: none;
+        }
+
+        /* Canvas AI dibiarkan normal (tidak diputar CSS) agar tulisan yang dibentuk benar */
+        #paintCanvas {
+            background-color: white;
+        }
+
+        .control-panel {
+            margin-top: 25px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .target-input {
+            background: #111;
+            border: 2px solid #00ff88;
+            border-radius: 14px;
+            padding: 14px;
+            font-size: 22px;
+            color: #00ff88;
+            width: 260px;
+            text-align: center;
+            outline: none;
+            letter-spacing: 2px;
+        }
+
+        button.main-btn {
+            margin-top: 30px;
+            padding: 16px 34px;
+            font-size: 20px;
+            border-radius: 14px;
+            border: none;
+            background: linear-gradient(135deg, #00ff88, #00ccff);
+            color: #000;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.3s;
+        }
+
+        button.main-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .result {
+            margin-top: 30px;
+            font-size: 22px;
+            background: #111;
+            display: none;
+            padding: 24px 34px;
+            border-radius: 18px;
+            border: 2px solid #00ff88;
+            min-width: 300px;
+        }
+
+        .hint {
+            margin-top: 10px;
+            font-size: 16px;
+            color: #aaa;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>DisaBicara – Level 2</h1>
+    <p>✍️ Tulis <b>satu kata</b> perlahan (contoh: <b>rusa</b>)</p>
+    <p class="hint">☝️ Tulis (Telunjuk Saja) | ✋ Hapus (Buka Telapak)</p>
+
+    <div class="control-panel">
+        <input id="target" class="target-input" placeholder="Target kata" autocomplete="off">
+    </div>
+
+    <div class="container">
+        <div class="box">
+            <h3>Kamera</h3>
+            <p>Goresan muncul di sini juga</p>
+            <div class="media-container">
+                <video id="webcam" playsinline></video>
+                <canvas id="cameraOverlay"></canvas>
+            </div>
+        </div>
+
+        <div class="box">
+            <h3>Canvas</h3>
+            <p>Input untuk AI (Hitam Putih)</p>
+            <div class="media-container">
+                <canvas id="paintCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="control-panel">
+        <button class="main-btn" onclick="checkWord()">Cek Kata</button>
+        <button class="main-btn" style="background: #ff4444;" onclick="clearCanvas()">Hapus</button>
+    </div>
+
+    <div id="result" class="result"></div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const paintCanvas = document.getElementById('paintCanvas');
+        const pctx = paintCanvas.getContext('2d');
+        const cameraOverlay = document.getElementById('cameraOverlay');
+        const octx = cameraOverlay.getContext('2d');
+
+        paintCanvas.width = 640; paintCanvas.height = 480;
+        cameraOverlay.width = 640; cameraOverlay.height = 480;
+
+        function resetCanvas() {
+            pctx.fillStyle = "white";
+            pctx.fillRect(0, 0, paintCanvas.width, paintCanvas.height);
+            octx.clearRect(0, 0, cameraOverlay.width, cameraOverlay.height);
+        }
+        resetCanvas();
+
+        let prevPoint = null;
+        let smoothPoint = null;
+        const alpha = 0.6;
+
+        function onResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const rawX = (1 - landmarks[8].x) * paintCanvas.width;
+                const rawY = landmarks[8].y * paintCanvas.height;
+
+                if (smoothPoint === null) {
+                    smoothPoint = { x: rawX, y: rawY };
+                } else {
+                    smoothPoint.x = alpha * rawX + (1 - alpha) * smoothPoint.x;
+                    smoothPoint.y = alpha * rawY + (1 - alpha) * smoothPoint.y;
+                }
+
+                const fingers = {
+                    index: landmarks[8].y < landmarks[6].y,
+                    middle: landmarks[12].y < landmarks[10].y,
+                    ring: landmarks[16].y < landmarks[14].y,
+                    pinky: landmarks[20].y < landmarks[18].y
+                };
+
+                let gesture = "STOP";
+                if (fingers.index && !fingers.middle && !fingers.ring && !fingers.pinky) {
+                    gesture = "DRAW";
+                }
+                else if (fingers.index && fingers.middle && fingers.ring && fingers.pinky) {
+                    gesture = "ERASE";
+                }
+
+                if (gesture === "DRAW") {
+                    if (prevPoint) {
+                        drawLine(pctx, prevPoint, smoothPoint, "black", 25);
+                        drawLine(octx, prevPoint, smoothPoint, "black", 25);
+                    }
+                    prevPoint = { x: smoothPoint.x, y: smoothPoint.y };
+                }
+                else if (gesture === "ERASE") {
+                    eraseCircle(pctx, smoothPoint, 30, "white");
+                    eraseCircle(octx, smoothPoint, 30, "clear");
+                    prevPoint = null;
+                }
+                else {
+                    prevPoint = null;
+                }
+            } else {
+                prevPoint = null;
+                smoothPoint = null;
+            }
+        }
+
+        function drawLine(context, p1, p2, color, width) {
+            context.beginPath();
+            context.strokeStyle = color;
+            context.lineWidth = width;
+            context.lineCap = "round";
+            context.lineJoin = "round";
+            context.moveTo(p1.x, p1.y);
+            context.lineTo(p2.x, p2.y);
+            context.stroke();
+        }
+
+        function eraseCircle(context, p, size, mode) {
+            context.beginPath();
+            context.arc(p.x, p.y, size, 0, Math.PI * 2);
+            if (mode === "clear") {
+                context.globalCompositeOperation = 'destination-out';
+                context.fill();
+                context.globalCompositeOperation = 'source-over';
+            } else {
+                context.fillStyle = mode;
+                context.fill();
+            }
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(video, {
+            onFrame: async () => { await hands.send({ image: video }); },
+            width: 640, height: 480
+        });
+        camera.start();
+
+        function clearCanvas() {
+            resetCanvas();
+            document.getElementById("result").style.display = "none";
+        }
+
+        function checkWord() {
+            const targetValue = document.getElementById("target").value.trim();
+            if (!targetValue) { alert("Masukkan kata target!"); return; }
+
+            const resultBox = document.getElementById("result");
+            resultBox.style.display = "none";
+
+            const dataURL = paintCanvas.toDataURL('image/png');
+
+            fetch("/check_word", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ target: targetValue, image: dataURL })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    resultBox.style.display = "inline-block";
+                    resultBox.innerHTML = `
+                <div>Target: <b>${targetValue}</b></div>
+                <div>Hasil: <b>${data.prediction}</b></div>
+                <div>Skor: <b>${data.score}%</b></div>
+                <div style="color:${data.correct ? '#00ff88' : '#ff4444'}">
+                    Status: <b>${data.correct ? 'BENAR' : 'PERLU LATIHAN'}</b>
+                </div>
+            `;
+                })
+                .catch(err => console.error(err));
+        }
+    </script>
+</body>
+
+</html>
