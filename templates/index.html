@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <title>DisaBicara – Handwriting AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <style>
+        body {
+            background: radial-gradient(circle at top, #0f2027, #000000);
+            color: #ffffff;
+            text-align: center;
+            font-family: 'Segoe UI', sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #00ff88;
+            letter-spacing: 1px;
+        }
+
+        .container {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+
+        .box {
+            width: 500px;
+            max-width: 100%;
+        }
+
+        .media-container {
+            position: relative;
+            width: 100%;
+            border-radius: 16px;
+            border: 2px solid #00ff88;
+            overflow: hidden;
+            background: #111;
+            aspect-ratio: 4/3;
+        }
+
+        video,
+        #paintCanvas,
+        #cameraOverlay {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* Mirror tampilan agar natural bagi user */
+        video {
+            transform: rotateY(180deg);
+        }
+
+        #cameraOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+
+        .control-panel {
+            margin-top: 25px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .mode-toggle {
+            display: flex;
+            background: #111;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid #00ff88;
+        }
+
+        .mode-toggle button {
+            padding: 12px 20px;
+            background: transparent;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            transition: all 0.25s;
+        }
+
+        .mode-toggle button.active {
+            background: #00ff88;
+            color: #000;
+            font-weight: bold;
+        }
+
+        .target-input {
+            background: #111;
+            border: 2px solid #00ff88;
+            border-radius: 12px;
+            padding: 12px;
+            font-size: 18px;
+            color: #00ff88;
+            width: 220px;
+            text-align: center;
+            outline: none;
+        }
+
+        button.main-btn {
+            margin-top: 30px;
+            padding: 14px 28px;
+            font-size: 18px;
+            border-radius: 12px;
+            border: none;
+            background: linear-gradient(135deg, #00ff88, #00ccff);
+            color: #000;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .result {
+            margin-top: 25px;
+            font-size: 20px;
+            background: #111;
+            display: none;
+            padding: 20px 30px;
+            border-radius: 16px;
+            border: 2px solid #00ff88;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>DisaBicara – Handwriting AI</h1>
+    <p>☝️ Tulis | ✋ Hapus (Buka Telapak)</p>
+
+    <div class="control-panel">
+        <div class="mode-toggle">
+            <button id="btn-number" class="active" onclick="setMode('number', this)">Angka</button>
+            <button id="btn-upper" onclick="setMode('upper', this)">Huruf Besar</button>
+            <button id="btn-lower" onclick="setMode('lower', this)">Huruf Kecil</button>
+        </div>
+        <input id="target" class="target-input" placeholder="Target: A / b / 7">
+    </div>
+
+    <div class="container">
+        <div class="box">
+            <h3>Kamera</h3>
+            <div class="media-container">
+                <video id="webcam" playsinline></video>
+                <canvas id="cameraOverlay"></canvas>
+            </div>
+        </div>
+        <div class="box">
+            <h3>Canvas</h3>
+            <div class="media-container">
+                <canvas id="paintCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="control-panel">
+        <button class="main-btn" onclick="checkWriting()">Cek Tulisanmu</button>
+        <button class="main-btn" style="background: #ff4444;" onclick="clearCanvas()">Hapus</button>
+    </div>
+
+    <div id="result" class="result"></div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const paintCanvas = document.getElementById('paintCanvas');
+        const pctx = paintCanvas.getContext('2d');
+        const cameraOverlay = document.getElementById('cameraOverlay');
+        const octx = cameraOverlay.getContext('2d');
+
+        paintCanvas.width = 640; paintCanvas.height = 480;
+        cameraOverlay.width = 640; cameraOverlay.height = 480;
+
+        let currentMode = "number";
+        let prevPoint = null;
+        let smoothPoint = null;
+        const alpha = 0.6;
+
+        function setMode(mode, btn) {
+            currentMode = mode;
+            document.querySelectorAll(".mode-toggle button").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+        }
+
+        function resetCanvas() {
+            pctx.fillStyle = "white";
+            pctx.fillRect(0, 0, paintCanvas.width, paintCanvas.height);
+            octx.clearRect(0, 0, cameraOverlay.width, cameraOverlay.height);
+        }
+        resetCanvas();
+
+        function onResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+
+                const rawX = (1 - landmarks[8].x) * paintCanvas.width;
+                const rawY = landmarks[8].y * paintCanvas.height;
+
+                if (smoothPoint === null) {
+                    smoothPoint = { x: rawX, y: rawY };
+                } else {
+                    smoothPoint.x = alpha * rawX + (1 - alpha) * smoothPoint.x;
+                    smoothPoint.y = alpha * rawY + (1 - alpha) * smoothPoint.y;
+                }
+
+                const fingers = {
+                    index: landmarks[8].y < landmarks[6].y,
+                    middle: landmarks[12].y < landmarks[10].y,
+                    ring: landmarks[16].y < landmarks[14].y,
+                    pinky: landmarks[20].y < landmarks[18].y
+                };
+
+                let gesture = (fingers.index && !fingers.middle) ? "DRAW" :
+                    (fingers.index && fingers.middle && fingers.ring) ? "ERASE" : "STOP";
+
+                if (gesture === "DRAW") {
+                    if (prevPoint) {
+                        pctx.beginPath();
+                        pctx.strokeStyle = "black";
+                        pctx.lineWidth = 25;
+                        pctx.lineCap = "round";
+                        pctx.moveTo(prevPoint.x, prevPoint.y);
+                        pctx.lineTo(smoothPoint.x, smoothPoint.y);
+                        pctx.stroke();
+
+                        octx.beginPath();
+                        octx.strokeStyle = "black";
+                        octx.lineWidth = 20;
+                        octx.lineCap = "round";
+                        octx.moveTo(prevPoint.x, prevPoint.y);
+                        octx.lineTo(smoothPoint.x, smoothPoint.y);
+                        octx.stroke();
+                    }
+                    prevPoint = { x: smoothPoint.x, y: smoothPoint.y };
+                } else if (gesture === "ERASE") {
+
+                    pctx.beginPath();
+                    pctx.fillStyle = "white";
+                    pctx.arc(smoothPoint.x, smoothPoint.y, 30, 0, Math.PI * 2);
+                    pctx.fill();
+
+                    octx.globalCompositeOperation = 'destination-out';
+                    octx.beginPath();
+                    octx.arc(smoothPoint.x, smoothPoint.y, 35, 0, Math.PI * 2);
+                    octx.fill();
+                    octx.globalCompositeOperation = 'source-over';
+                    prevPoint = null;
+                } else {
+                    prevPoint = null;
+                }
+            } else {
+                prevPoint = null;
+                smoothPoint = null;
+            }
+        }
+
+        // Inisialisasi MediaPipe Hands dengan CDN spesifik
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        // Inisialisasi Kamera Utils
+        const camera = new Camera(video, {
+            onFrame: async () => {
+                await hands.send({ image: video });
+            },
+            width: 640,
+            height: 480
+        });
+        camera.start();
+
+        function clearCanvas() {
+            resetCanvas();
+            document.getElementById("result").style.display = "none";
+        }
+
+        function checkWriting() {
+            const target = document.getElementById("target").value.trim();
+            if (!target) {
+                alert("Masukkan target terlebih dahulu!");
+                return;
+            }
+
+            const dataURL = paintCanvas.toDataURL('image/png');
+
+            fetch("/save", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    mode: currentMode,
+                    target: target,
+                    image: dataURL
+                })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    const resultBox = document.getElementById("result");
+                    resultBox.style.display = "inline-block";
+                    resultBox.innerHTML = `
+                    Target: <b>${data.target}</b><br>
+                    Prediksi: <b>${data.prediction}</b><br>
+                    Confidence: <b>${data.confidence}%</b><br>
+                    Status: <b style="color:${data.correct ? '#00ff88' : '#ff4444'}">
+                        ${data.correct ? 'BENAR' : 'SALAH'}
+                    </b>`;
+                })
+                .catch(err => {
+                    console.error("Fetch Error:", err);
+                    alert("Gagal terhubung ke server.");
+                });
+        }
+    </script>
+</body>
+
+</html>

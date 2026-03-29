@@ -1,0 +1,10 @@
+# Python
+.venv/
+__pycache__/
+
+# Model AI
+models/*
+!models/.gitkeep
+
+# Node
+node_modules/
