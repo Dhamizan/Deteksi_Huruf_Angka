@@ -1,0 +1,13 @@
+# Mengabaikan folder dataset dan semua isinya
+dataset/
+
+# Mengabaikan folder hasil training dan log
+hasil/
+
+# Mengabaikan virtual environment
+venv/
+
+# Mengabaikan file sistem atau cache python
+__pycache__/
+*.pyc
+.vscode/

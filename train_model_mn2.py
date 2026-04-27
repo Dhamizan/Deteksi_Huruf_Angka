@@ -1,12 +1,14 @@
 import tensorflow as tf
 import os
 
+# Inisialisasi layer dan utility
 layers = tf.keras.layers
 models = tf.keras.models
 image_dataset_from_directory = tf.keras.utils.image_dataset_from_directory
 
+# 1. Konfigurasi Dataset (Menggunakan struktur yang sama [cite: 25])
 base_dir = 'dataset/dataset_terbaru/Dataset_Alphabet_Nomor'
-IMG_SIZE = (64, 64)
+IMG_SIZE = (224, 224)
 BATCH_SIZE = 16
 AUTOTUNE = tf.data.AUTOTUNE
 
@@ -36,43 +38,47 @@ train_ds = train_ds.prefetch(AUTOTUNE)
 val_ds   = val_ds.prefetch(AUTOTUNE)
 test_ds  = test_ds.prefetch(AUTOTUNE)
 
+# 2. Data Augmentation (Teknik yang terbukti efektif meningkatkan akurasi)
 data_augmentation = tf.keras.Sequential([
     layers.RandomRotation(0.05),
     layers.RandomTranslation(0.05, 0.05),
 ])
 
+# 3. Membangun Model MobileNetV2
+base_model = tf.keras.applications.MobileNetV2(
+    input_shape=(64, 64, 3),
+    include_top=False,
+    weights='imagenet'
+)
+
+base_model.trainable = False 
+
 model = models.Sequential([
     layers.Input(shape=(64, 64, 3)),
     data_augmentation,
-    layers.Rescaling(1./255),
-
-    layers.Conv2D(32, 3, activation='relu', padding='same'),
-    layers.MaxPooling2D(),
-
-    layers.Conv2D(64, 3, activation='relu', padding='same'),
-    layers.MaxPooling2D(),
-    
-    layers.Conv2D(128, 3, activation='relu', padding='same'),
-    layers.MaxPooling2D(),
-
-    layers.Flatten(),
+    layers.Lambda(tf.keras.applications.mobilenet_v2.preprocess_input),
+    base_model,
+    layers.GlobalAveragePooling2D(),
     layers.Dense(256, activation='relu'),
     layers.Dropout(0.5),
     layers.Dense(len(class_names), activation='softmax')
 ])
 
+# 4. Compile Model
 model.compile(
     optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
     loss='categorical_crossentropy',
     metrics=['accuracy']
 )
 
+# 5. Callbacks (Early Stopping untuk menjaga model tetap Well-Fit [cite: 512, 650])
 early_stop = tf.keras.callbacks.EarlyStopping(
     monitor='val_loss',
     patience=5,
     restore_best_weights=True
 )
 
+# 6. Training Process
 history = model.fit(
     train_ds,
     epochs=50,
@@ -80,11 +86,12 @@ history = model.fit(
     callbacks=[early_stop]
 )
 
-print("\n--- Evaluasi Data Test ---")
+# 7. Evaluasi dan Penyimpanan
+print("\n--- Evaluasi Data Test (MobileNetV2) ---")
 test_loss, test_acc = model.evaluate(test_ds)
-print(f"Akurasi Test: {test_acc*100:.2f}%")
+print(f"Akurasi Test MobileNetV2: {test_acc*100:.2f}%")
 
-os.makedirs('hasil', exist_ok=True)
-model.save('hasil/hasil_dataset_baru/CNN_Dataset_Alphabet_Nomor2.keras')
+os.makedirs('hasil/hasil_mobilenet', exist_ok=True)
+model.save('hasil/hasil_mobilenet/MobileNetV2_Alphabet_Besar.keras')
 
-print("Model & label versi perbaikan berhasil disimpan")
+print("Model MobileNetV2 berhasil disimpan untuk tahap komparasi arsitektur.")
